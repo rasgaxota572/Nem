@@ -1,0 +1,27 @@
+name: Build Android Kernel
+
+on:
+  workflow_dispatch: # Allows manual triggering
+  push:
+    branches:
+      - main # Trigger on pushes to the main branch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest # Or a more specific runner if needed
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: alessandroaraujo5/Nem.git #Replace with your repo
+          ref: kernel_s20_fe # Replace with your branch
+      - name: Setup Build Environment
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential git flex bison libssl-dev libelf-dev \
+                            python3-pip libxml2-utils bc cpio rsync zip unzip
+      - name: make script file executable 
+        run: chmod +x build_kernel.sh
+      - name: Run script file
+        run: ./build_kernel.sh
