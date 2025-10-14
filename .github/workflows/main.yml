@@ -1,27 +1,97 @@
-name: Build Android Kernel
+name: Build Kernel and Generate boot.img
 
 on:
-  workflow_dispatch: # Allows manual triggering
-  push:
-    branches:
-      - main # Trigger on pushes to the main branch
+  workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest # Or a more specific runner if needed
+  build-kernel:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
-      - name: Checkout Kernel Source
-        uses: actions/checkout@v4
-        with:
-          repository: alessandroaraujo5/Nem.git #Replace with your repo
-          ref: kernel_s20_fe # Replace with your branch
-      - name: Setup Build Environment
-        run: |
-          sudo apt update
-          sudo apt install -y build-essential git flex bison libssl-dev libelf-dev \
-                            python3-pip libxml2-utils bc cpio rsync zip unzip
-      - name: make script file executable 
-        run: chmod +x build_kernel.sh
-      - name: Run script file
-        run: ./build_kernel.sh
+    - name: Checkout source
+      uses: actions/checkout@v3
+
+    - name: Build Kernel
+      uses: alessandroaraujo5/kernel_build_action@main
+      with:
+        kernel-url: https://github.com/alessandroaraujo5/android_kernel_samsung_s20fe.git
+        kernel-dir: kernel_s20_fe
+        kernel-branch: kernel_s20_fe
+        config: exynos9830-r8slte_defconfig
+        arch: arm64
+        aosp-gcc: true
+        aosp-clang: true
+        ksu: false
+        kvm: false
+        android-version: 12
+        aosp-clang-version: r416183b1
+        anykernel3: true
+
+    - name: Instalar dependências
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cpio abootimg build-essential lz4
+
+    - name: Verificar saída do kernel
+      run: |
+        echo "Listando arquivos encontrados:"
+        find . -type f \( -name "Image" -o -name "*.img" \)
+
+    - name: Construir boot.img, dtb.img e dtbo.img
+      run: |
+        set -e
+
+        export MODEL=r8s
+        export BOARD=exynos9830
+        mkdir -p build/out/$MODEL
+
+        # Torna ferramentas executáveis
+        chmod +x ./toolchain/mkdtimg
+        chmod +x ./toolchain/mkbootimg
+
+        # Copia kernel Image descompactado
+        cp kernel/lineage-22/out/arch/arm64/boot/Image build/out/$MODEL/
+
+        # Gera dtb.img
+        ./toolchain/mkdtimg cfg_create build/out/$MODEL/dtb.img build/dtconfigs/exynos9830.cfg -d kernel/lineage-22/out/arch/arm64/boot/dts/exynos
+
+        # Gera dtbo.img
+        ./toolchain/mkdtimg cfg_create build/out/$MODEL/dtbo.img build/dtconfigs/$MODEL.cfg -d kernel/lineage-22/out/arch/arm64/boot/dts/samsung
+
+        # Gera ramdisk
+        echo "Gerando RAMDisk..."
+        pushd build/ramdisk > /dev/null
+        find . ! -name . | LC_ALL=C sort | cpio -o -H newc -R root:root | gzip > ../out/$MODEL/ramdisk.cpio.gz
+        popd > /dev/null
+
+        # Cria boot.img
+        echo "Gerando boot.img..."
+        ./toolchain/mkbootimg \
+          --base 0x10000000 \
+          --board $BOARD \
+          --cmdline "androidboot.hardware=exynos990 loop.max_part=7" \
+          --dtb build/out/$MODEL/dtb.img \
+          --dtb_offset 0x00000000 \
+          --hashtype sha1 \
+          --header_version 2 \
+          --kernel build/out/$MODEL/Image \
+          --kernel_offset 0x00008000 \
+          --os_patch_level 2024-01 \
+          --os_version 14.0.0 \
+          --pagesize 2048 \
+          --ramdisk build/out/$MODEL/ramdisk.cpio.gz \
+          --ramdisk_offset 0x01000000 \
+          --second_offset 0xF0000000 \
+          --tags_offset 0x00000100 \
+          -o build/out/$MODEL/boot.img
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: boot-dtbo-dtb
+        path: |
+          build/out/r8s/boot.img
+          build/out/r8s/dtb.img
+          build/out/r8s/dtbo.img
