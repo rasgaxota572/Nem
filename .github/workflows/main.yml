@@ -16,9 +16,9 @@ jobs:
     - name: Build Kernel
       uses: alessandroaraujo5/kernel_build_action@main
       with:
-        kernel-url: https://github.com/alessandroaraujo5/android_kernel_samsung_s20fe.git
-        kernel-dir: kernel_s20_fe
-        kernel-branch: kernel_s20_fe
+        kernel-url: https://github.com/alessandroaraujo5/Nem.git
+        kernel-dir: exynos
+        kernel-branch: exynos
         config: exynos9830-r8slte_defconfig
         arch: arm64
         aosp-gcc: true
