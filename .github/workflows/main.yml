@@ -1,97 +1,84 @@
-name: Build Kernel and Generate boot.img
+name: R8S
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'arch/arm64/configs/exynos9830-r8slte_defconfig'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'arch/arm64/configs/exynos9830-r8slte_defconfig'
   workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force build even if exynos9830-r8slte_defconfig is not modified (manual trigger)'
+        type: boolean
+        default: false
 
 jobs:
-  build-kernel:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
 
     steps:
-    - name: Checkout source
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Build Kernel
-      uses: alessandroaraujo5/kernel_build_action@main
-      with:
-        kernel-url: https://github.com/alessandroaraujo5/Nem.git
-        kernel-dir: exynos
-        kernel-branch: exynos
-        config: exynos9830-r8slte_defconfig
-        arch: arm64
-        aosp-gcc: true
-        aosp-clang: true
-        ksu: false
-        kvm: false
-        android-version: 12
-        aosp-clang-version: r416183b1
-        anykernel3: true
+      - name: Set up environment
+        run: |
+          sudo apt-get update
+          # Consolidated apt install for better efficiency
+          sudo apt install -y build-essential libncurses5-dev zlib1g-dev libssl-dev libffi-dev libreadline-dev libbz2-dev libsqlite3-dev make gcc pigz cpio lld llvm g++-aarch64-linux-gnu libelf-dev clang gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu neofetch libarchive-tools ccache
+          
+          neofetch
 
-    - name: Instalar dependências
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cpio abootimg build-essential lz4
+      - name: Build Kernel
+        run: |
+          chmod +x ./build_kernel.sh
+          # The script is assumed to place Image.gz in arch/arm64/boot/
+          ./build_kernel.sh
 
-    - name: Verificar saída do kernel
-      run: |
-        echo "Listando arquivos encontrados:"
-        find . -type f \( -name "Image" -o -name "*.img" \)
+      - name: Package Kernel to Flashable Zip 📦
+        run: |
+          # 1. Clone a kernel flashing template (e.g., AnyKernel3)
+          git clone --depth 1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
+          
+          # 2. Copy the newly built kernel image (Image.gz) into the AnyKernel3 directory
+          # Note: Adjust the source path if your build script puts Image.gz elsewhere.
+          cp arch/arm64/boot/Image.gz AnyKernel3/
+          
+          # Optional: Copy other components like dtb, modules, etc., if needed
+          # cp path/to/dtb AnyKernel3/
+          
+          # 3. Create the final flashable zip
+          ZIP_NAME="R8S-Kernel-$(date +%Y%m%d%H%M).zip"
+          cd AnyKernel3
+          zip -r9 "../$ZIP_NAME" *
+          cd ..
+          
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          echo "Package created: $ZIP_NAME"
 
-    - name: Construir boot.img, dtb.img e dtbo.img
-      run: |
-        set -e
+      - name: Find built zips
+        id: find_zips
+        run: |
+          # Now, it should find the ZIP created in the previous step
+          ZIP_FILES=$(find . -type f -name "*.zip")
+          if [[ -z "$ZIP_FILES" ]]; then
+            echo "No ZIPs found! Exiting."
+            exit 1
+          fi
+          # The $GITHUB_ENV is already set by the previous step, but we ensure 
+          # ZIP_FILES is set for robustness and handling multiple zips if necessary.
+          echo "ZIP_FILES<<EOF" >> $GITHUB_ENV
+          echo "$ZIP_FILES" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
-        export MODEL=r8s
-        export BOARD=exynos9830
-        mkdir -p build/out/$MODEL
-
-        # Torna ferramentas executáveis
-        chmod +x ./toolchain/mkdtimg
-        chmod +x ./toolchain/mkbootimg
-
-        # Copia kernel Image descompactado
-        cp kernel/lineage-22/out/arch/arm64/boot/Image build/out/$MODEL/
-
-        # Gera dtb.img
-        ./toolchain/mkdtimg cfg_create build/out/$MODEL/dtb.img build/dtconfigs/exynos9830.cfg -d kernel/lineage-22/out/arch/arm64/boot/dts/exynos
-
-        # Gera dtbo.img
-        ./toolchain/mkdtimg cfg_create build/out/$MODEL/dtbo.img build/dtconfigs/$MODEL.cfg -d kernel/lineage-22/out/arch/arm64/boot/dts/samsung
-
-        # Gera ramdisk
-        echo "Gerando RAMDisk..."
-        pushd build/ramdisk > /dev/null
-        find . ! -name . | LC_ALL=C sort | cpio -o -H newc -R root:root | gzip > ../out/$MODEL/ramdisk.cpio.gz
-        popd > /dev/null
-
-        # Cria boot.img
-        echo "Gerando boot.img..."
-        ./toolchain/mkbootimg \
-          --base 0x10000000 \
-          --board $BOARD \
-          --cmdline "androidboot.hardware=exynos990 loop.max_part=7" \
-          --dtb build/out/$MODEL/dtb.img \
-          --dtb_offset 0x00000000 \
-          --hashtype sha1 \
-          --header_version 2 \
-          --kernel build/out/$MODEL/Image \
-          --kernel_offset 0x00008000 \
-          --os_patch_level 2024-01 \
-          --os_version 14.0.0 \
-          --pagesize 2048 \
-          --ramdisk build/out/$MODEL/ramdisk.cpio.gz \
-          --ramdisk_offset 0x01000000 \
-          --second_offset 0xF0000000 \
-          --tags_offset 0x00000100 \
-          -o build/out/$MODEL/boot.img
-
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: boot-dtbo-dtb
-        path: |
-          build/out/r8s/boot.img
-          build/out/r8s/dtb.img
-          build/out/r8s/dtbo.img
+      - name: Upload built kernels
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-kernels
+          # The path must be the exact file name(s), which we ensure is set in the Package step
+          path: ${{ env.ZIP_NAME }}
