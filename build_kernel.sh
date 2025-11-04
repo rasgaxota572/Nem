@@ -1,10 +1,11 @@
 #!/bin/bash
 
-export SEC_BUILD_CONF_VENDOR_BUILD_OS=13
-export PLATFORM_VERSION=13
-export ANDROID_MAJOR_VERSION=T
 export ARCH=arm64
+export SUBARCH=arm64
+export CC=clang
+export LLVM=1
+export CROSS_COMPILE=aarch64-linux-gnu-
+export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
 make exynos9830-r8slte_defconfig
-make -j16
-
+make -j$(nproc) CC=clang LLVM=1
